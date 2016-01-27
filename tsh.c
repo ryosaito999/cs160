@@ -192,6 +192,7 @@ void eval(char *cmdline)
 
         pid = fork();
         if (pid == 0) { //if child and is foreground...
+        	setpgid(0,0);
             execvp(args[0], args ); 
             exit(0);
         } 
@@ -275,17 +276,27 @@ int parseline(const char *cmdline, char **argv)
 int builtin_cmd(char **argv) 
 {
     if( strcmp(argv[0], "quit") == 0){
-        printf("quitting");
+    	printf("Goodbye!\n");
+    	exit(0);
         return 1;
     }
     
     else if( strcmp(argv[0], "jobs") == 0){
-        listjobs(jobs);
-        //printf("\n" );
-        
+        listjobs(jobs);       
         return 1;
 
     }
+
+    else if( strcmp(argv[0], "fg") == 0){
+        return 1;
+
+    }
+
+    else if( strcmp(argv[0], "bg") == 0){
+        return 1;
+    }
+
+
     return 0;     /* not a builtin command */
 }
 
@@ -330,11 +341,17 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-	//need to handle race conditions here see notes
-    printf("Quitting through Cntl-C\n");
-    exit(0);
+	//grab foreground pid
+	int i;
+	int n = 0;
+	int pid;
+	for(i=0 ; i <MAXJOBS ; i++){
+		if(jobs[i].state == FG){
+			pid = jobs[i].pid;
+			kill(-pid, SIGTERM);
+		}	
+	}
     
-    return;
 }
 
 /*
