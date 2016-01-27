@@ -184,24 +184,27 @@ char ** remove_spaces(char * source)
 
 void eval(char *cmdline) 
 {
-    char ** args;
+    char ** args = (char*) malloc(MAXARGS*MAXLINE*sizeof(char));
     int bg = parseline(cmdline,args);
     pid_t pid;
     
     if( builtin_cmd( args) == 0){
 
         pid = fork();
-        if (pid == 0) { //if child
-            printf("child: %d\n", pid );
-            execvp(args[0], args );
-            exit(1);
+        if (pid == 0) { //if child and is foreground...
+            execvp(args[0], args ); 
+            exit(0);
         } 
 
-        if(pid != 0){ //if parent
-            //addjob(jobs, pid, FG, args[0] );
-            waitfg(pid);
-            wait(0);
-            //deletejob(jobs, pid );
+        if(pid != 0){
+        	if( bg == 0) {// do foreground stuff
+            	addjob(jobs, pid, FG, args[0] );        
+				waitfg(pid);       		
+        	}
+        	else{ // do background stuff 
+            	addjob(jobs, pid, BG, args[0] );        
+        	}
+
         }
     }
 
@@ -299,8 +302,8 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-	//
     wait(0);
+    deletejob(jobs, pid);
     return;
 }
 
@@ -330,6 +333,7 @@ void sigint_handler(int sig)
 	//need to handle race conditions here see notes
     printf("Quitting through Cntl-C\n");
     exit(0);
+    
     return;
 }
 
