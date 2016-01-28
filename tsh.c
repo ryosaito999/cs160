@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 
+
 /* Misc manifest constants */
 #define MAXLINE    1024   /* max line size */
 #define MAXARGS     128   /* max args on a command line */
@@ -40,8 +41,11 @@ extern char **environ;      /* defined in libc */
 char prompt[] = "tsh> ";    /* command line prompt (DO NOT CHANGE) */
 int verbose = 1;            /* if true, print additional output */
 int nextjid = 1;            /* next job ID to allocate */
+int status;
 char sbuf[MAXLINE];         /* for composing sprintf messages */
 
+int shell_terminal;
+int shell_pgid;
 struct job_t {              /* The job struct */
     pid_t pid;              /* job PID */
     int jid;                /* job ID [1, 2, ...] */
@@ -94,6 +98,18 @@ int main(int argc, char **argv)
     char cmdline[MAXLINE];
     int emit_prompt = 1; /* emit prompt (default) */
 
+    shell_terminal = STDIN_FILENO;
+    shell_pgid = getpid ();
+
+    if (setpgid (shell_pgid, shell_pgid) < 0)
+        {
+          perror ("Couldn't put the shell in its own process group");
+          exit (1);
+    }
+
+
+
+
     /* Redirect stderr to stdout (so that driver will get all output
      * on the pipe connected to stdout) */
     dup2(1, 2);
@@ -121,6 +137,7 @@ int main(int argc, char **argv)
     Signal(SIGINT,  sigint_handler);   /* ctrl-c */
     Signal(SIGTSTP, sigtstp_handler);  /* ctrl-z */
     Signal(SIGCHLD, sigchld_handler);  /* Terminated or stopped child */
+
 
     /* This one provides a clean way to kill the shell */
     Signal(SIGQUIT, sigquit_handler); 
@@ -187,23 +204,44 @@ void eval(char *cmdline)
     char ** args = (char*) malloc(MAXARGS*MAXLINE*sizeof(char));
     int bg = parseline(cmdline,args);
     pid_t pid;
+
+	sigset_t signalSet;  
+	sigemptyset(&signalSet);
+	sigaddset(&signalSet, SIGCHLD);
+
+
     
     if( builtin_cmd( args) == 0){
+		sigprocmask(SIG_BLOCK, &signalSet, NULL);
 
-        pid = fork();
+        pid = vfork();
         if (pid == 0) { //if child and is foreground...
         	setpgid(0,0);
-            execvp(args[0], args ); 
+			sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
+
+            if( execve(args[0], args, environ ) == -1){
+            	printf("bad command!\n");
+            } 
             exit(0);
+
         } 
 
         if(pid != 0){
+
+        	//shell_group = tcgetpgrp();
+    	    Signal(SIGTSTP, SIG_IGN);  /* ctrl-z */
+
         	if( bg == 0) {// do foreground stuff
-            	addjob(jobs, pid, FG, args[0] );        
+            	addjob(jobs, pid, FG, args[0] );
+				sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
+        
 				waitfg(pid);       		
         	}
-        	else{ // do background stuff 
+        	else{ 
+
             	addjob(jobs, pid, BG, args[0] );        
+				sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
+	
         	}
 
         }
@@ -313,6 +351,7 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    //waitpid(pid, &status, 0 | WNOHANG | WUNTRACED);
     wait(0);
     deletejob(jobs, pid);
     return;
@@ -343,12 +382,13 @@ void sigint_handler(int sig)
 {
 	//grab foreground pid
 	int i;
-	int n = 0;
 	int pid;
+
 	for(i=0 ; i <MAXJOBS ; i++){
 		if(jobs[i].state == FG){
 			pid = jobs[i].pid;
 			kill(-pid, SIGTERM);
+			return;
 		}	
 	}
     
@@ -361,6 +401,22 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+	int i;
+	int pid;
+	
+	printf("shell is %d!\n", shell_pgid);
+
+	for(i=0 ; i <MAXJOBS ; i++){
+		if(jobs[i].state == FG){
+			pid = jobs[i].pid;
+			jobs[i].state = ST; 
+			kill(-pid, SIGSTOP );
+
+			return;
+
+		}	
+	}
+
     return;
 }
 
