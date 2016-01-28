@@ -214,13 +214,14 @@ void eval(char *cmdline)
     if( builtin_cmd( args) == 0){
 		sigprocmask(SIG_BLOCK, &signalSet, NULL);
 
-        pid = vfork();
+        pid = fork();
         if (pid == 0) { //if child and is foreground...
         	setpgid(0,0);
 			sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
 
             if( execve(args[0], args, environ ) == -1){
             	printf("bad command!\n");
+            	fflush(stdout);
             } 
             exit(0);
 
@@ -228,13 +229,9 @@ void eval(char *cmdline)
 
         if(pid != 0){
 
-        	//shell_group = tcgetpgrp();
-    	    Signal(SIGTSTP, SIG_IGN);  /* ctrl-z */
-
         	if( bg == 0) {// do foreground stuff
             	addjob(jobs, pid, FG, args[0] );
 				sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
-        
 				waitfg(pid);       		
         	}
         	else{ 
@@ -352,8 +349,9 @@ void do_bgfg(char **argv)
 void waitfg(pid_t pid)
 {
     //waitpid(pid, &status, 0 | WNOHANG | WUNTRACED);
-    wait(0);
-    deletejob(jobs, pid);
+	while(pid == fgpid(jobs)) { /* uses a busy loop around the sleep function while pid is the fg process*/
+		sleep(0);
+	}
     return;
 }
 
@@ -370,6 +368,28 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+	int pid = 1;
+	int status ;
+	while( pid >0 ){
+		pid=waitpid(-1,&status,WNOHANG|WUNTRACED);         
+
+		if( pid > 0){
+
+		    if(WIFEXITED(status)) // child exited normally
+	            deletejob(jobs,pid);
+
+	        else{  //child is untraced !!
+	        	if(WIFSIGNALED(status)){ 
+					deletejob(jobs,pid);
+	        	}
+
+	        	if(WIFSTOPPED(status)){
+					getjobpid(jobs, pid)->state=ST;
+	        	}
+	        }
+		}
+	}
+
     return;
 }
 
@@ -384,13 +404,14 @@ void sigint_handler(int sig)
 	int i;
 	int pid;
 
-	for(i=0 ; i <MAXJOBS ; i++){
-		if(jobs[i].state == FG){
-			pid = jobs[i].pid;
-			kill(-pid, SIGTERM);
-			return;
-		}	
-	}
+	if( fgpid(jobs) == 0);
+		return;
+
+	pid = fgpid(jobs);
+	kill(-pid, SIGINT);
+	return;
+	
+	
     
 }
 
@@ -401,23 +422,15 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
-	int i;
+	//grab foreground pid
 	int pid;
-	
-	printf("shell is %d!\n", shell_pgid);
 
-	for(i=0 ; i <MAXJOBS ; i++){
-		if(jobs[i].state == FG){
-			pid = jobs[i].pid;
-			jobs[i].state = ST; 
-			kill(-pid, SIGSTOP );
+	if( fgpid(jobs) == 0);
+		return;
 
-			return;
-
-		}	
-	}
-
-    return;
+	pid = fgpid(jobs);
+	kill(-pid, SIGTSTP);
+	return;
 }
 
 /*********************
